@@ -1,179 +1,181 @@
 # 以图搜图系统
 
-基于ResNet特征提取的图片搜索引擎，支持持续下载模式和HTTP搜索接口。
-**特点：不保存本地图片，使用URL记录 + 自动去重 + 持续运行**
+基于 ResNet152 的图片搜索引擎，支持大规模持续爬取、智能训练状态追踪与 HTTP/Web 搜索接口。
 
-## 功能特性
+## 核心特性
 
-- 🔍 **以图搜图**: 输入图片URL，找到最相似的Top-K图片
-- 🌐 **URL记录**: 图片仅保存URL，不占用本地存储
-- 🔄 **自动去重**: 基于MD5哈希值自动跳过重复图片
-- 🚀 **持续运行**: 每下载10张图片自动提取特征并保存
-- 🌍 **HTTP接口**: 提供RESTful API进行图片搜索
-- 🧠 **ResNet特征**: 使用预训练ResNet模型提取图片特征
-- 💾 **持久化存储**: 特征向量保存到本地，支持快速加载
+- 🧠 **深度特征提取**：使用预训练 ResNet152 模型，输出 2048 维高精度特征向量
+- 🌐 **智能 URL 管理**：仅保存图片链接至本地，配合 `trained` 状态标记避免重复计算
+- 🔄 **批量流水线处理**：每 10 个 URL 为一组 → 下载 → MD5 去重 → 特征提取 → 自动入库
+- 📚 **分页与持久化**：支持无限规模图片检索，URL 按用户/页码分页存储至硬盘，具备环检测机制
+- 🔍 **多维度检索**：支持通过图片 URL 检索库中最相似的 Top-K 图片
+- 🖥️ **Web 可视化界面**：内置 Flask 服务器，提供图形化搜索与结果展示
+- 🚀 **持续运行模式**：后台线程自动发现新用户、爬取 URL 并更新特征库
+- ⚡ **GPU 加速**：自动检测并调用 CUDA 加速特征提取过程
+
+## 技术架构
+
+### 数据流
+```
+[imgbb 用户页] → [分页爬取 URL] → [本地 JSON 持久化]
+       ↓
+[顺序读取 10 个 URL] → [解析直接图片链接]
+       ↓
+[下载图片] → [MD5 哈希计算] → [库中已存在？是 → 跳过]
+                                       ↓ 否
+[ResNet152 特征提取] → [L2 归一化] → [标记 trained: true] → [入库保存]
+```
+
+### URL 状态追踪
+系统维护每个 URL 的训练状态，避免重复计算：
+```json
+[
+  {"url": "https://ibb.co/xxx", "trained": true},
+  {"url": "https://ibb.co/yyy", "trained": false}
+]
+```
+
+### 特征数据库
+- **格式**：`features/features_db.pkl` (Pickle 序列化)
+- **结构**：存储 URL、MD5 哈希、2048 维特征向量及元数据
+- **去重机制**：基于内容级 MD5 哈希，相同图片仅保留一次
 
 ## 项目结构
 
 ```
 image/
-├── config.py              # 配置文件
-├── download_images.py     # 图片获取模块
-├── feature_extractor.py   # ResNet特征提取模块
-├── feature_database.py    # 特征数据库模块（含去重）
-├── main.py                # 交互式主程序
-├── search_service.py      # 持续运行服务 + HTTP API
-├── requirements.txt       # 依赖包
-├── README.md              # 使用说明
+├── config.py              # 全局配置（TOP_K, MODEL_NAME, 路径等）
+├── download_imgbb.py      # imgbb 爬虫（分页、用户发现、URL 持久化）
+├── feature_extractor.py   # ResNet 特征提取器（支持批量处理）
+├── feature_database.py    # 特征数据库（CRUD、搜索、去重）
+├── search_service.py      # Flask 服务（持续下载 + API + Web UI）
+├── main.py                # 交互式主程序（CLI 模式）
+├── requirements.txt       # Python 依赖
+├── urls/                  # URL 持久化存储目录
+│   └── {username}_urls.json
 └── features/              # 特征数据库目录
-    └── features_db.pkl    # 特征数据库文件
+    └── features_db.pkl
 ```
 
-## 安装依赖
+## 快速开始
 
+### 1. 环境准备
 ```bash
+# 创建虚拟环境（推荐）
+python -m venv .venv
+.venv\Scripts\activate   # Windows
+source .venv/bin/activate # Linux/Mac
+
+# 安装依赖
 pip install -r requirements.txt
 ```
 
-## 使用方法
-
-### 模式一：交互式主程序
-
-```bash
-python main.py
+### 2. 配置
+在 `download_imgbb.py` 中配置 Cookies（如需访问受限内容）：
+```python
+IMGBB_HEADERS = {
+    'Cookie': 'LID=...; PHPSESSID=...',
+    'User-Agent': 'Mozilla/5.0 ...',
+}
 ```
 
-适用于手动控制、测试搜索功能。
-
-### 模式二：持续运行服务 + HTTP搜索接口（推荐）
-
+### 3. 运行服务
 ```bash
 python search_service.py
 ```
+服务启动后将：
+- 自动开始爬取并提取特征（后台线程）
+- 启动 Flask Web 服务器：`http://localhost:5000`
+- 按 `Ctrl+C` 优雅停止
 
-服务启动后：
-- 自动持续下载图片，每10张自动提取特征并保存
-- 提供HTTP API用于搜索相似图片
-- 按 `Ctrl+C` 停止服务
+## 使用方式
 
-## HTTP API接口
+### Web 界面
+访问 `http://localhost:5000` 即可使用图形化搜索界面，输入图片 URL 即可查看相似结果。
 
-服务运行在 `http://localhost:5000`
+### HTTP API
 
-### 1. 搜索相似图片
+| 接口 | 方法 | 描述 |
+|------|------|------|
+| `/api/search` | POST | 搜索相似图片 |
+| `/api/stats` | GET | 获取数据库统计 |
+| `/api/image/{index}` | GET | 获取指定图片（代理转发） |
+| `/api/stop` | POST | 停止服务 |
 
-**POST** `/api/search`
-
-请求体:
-```json
-{
-  "url": "https://example.com/image.jpg",
-  "top_k": 10
-}
+#### 搜索示例
+```bash
+curl -X POST http://localhost:5000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/image.jpg", "top_k": 10}'
 ```
 
-响应示例:
-```json
-{
-  "query_url": "https://example.com/image.jpg",
-  "total_in_db": 39,
-  "results": [
-    {"url": "https://cdn.seovx.com/?mom=302#1776142423599", "similarity": 0.5397},
-    {"url": "https://cdn.seovx.com/?mom=302#1776142031948", "similarity": 0.5166}
-  ]
-}
-```
-
-### 2. 获取数据库统计
-
-**GET** `/api/stats`
-
-响应示例:
-```json
-{
-  "total_images": 39,
-  "feature_dim": 2048,
-  "running": true
-}
-```
-
-### 3. 停止服务
-
-**POST** `/api/stop`
-
-### 4. API文档
-
-**GET** `/`
-
-返回所有可用接口信息。
-
-## 使用示例
-
-### Python调用
-
+#### Python 调用
 ```python
 import requests
 
-# 搜索相似图片
-response = requests.post('http://localhost:5000/api/search', json={
-    'url': 'https://example.com/image.jpg',
-    'top_k': 10
+resp = requests.post('http://localhost:5000/api/search', json={
+    'url': 'https://example.com/query.jpg',
+    'top_k': 5
 })
-results = response.json()
-
-for r in results['results']:
-    print(f"相似度: {r['similarity']:.4f} | URL: {r['url']}")
+for r in resp.json()['results']:
+    print(f"相似度: {r['similarity']:.4f} | {r['url']}")
 ```
 
-### cURL调用
-
+### CLI 交互模式
 ```bash
-# 搜索
-curl -X POST http://localhost:5000/api/search \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://example.com/image.jpg", "top_k": 5}'
-
-# 统计
-curl http://localhost:5000/api/stats
+python main.py
 ```
+适用于调试、单次查询或验证搜索效果。
 
 ## 配置说明
 
-在 `config.py` 中可以修改以下配置:
-
+`config.py` 核心参数：
 ```python
-# API配置
-API_URL = "https://cdn.seovx.com/?mom=302"  # 直接返回随机图片
-
-# 模型配置
-MODEL_NAME = "resnet50"  # 可选: resnet18, resnet34, resnet50, resnet101, resnet152
-BATCH_SIZE = 32
-FEATURE_DIM = 2048
-
-# 搜索配置
-TOP_K = 10  # 返回最相似的K张图片
+MODEL_NAME = 'resnet152'    # 特征提取模型
+FEATURE_DIM = 2048          # 特征维度
+TOP_K = 10                  # 默认返回结果数
+BASE_DIR = '...'            # 项目根目录
 ```
 
-## 技术原理
+## 工作原理
 
-1. **特征提取**: 使用预训练的ResNet模型（去掉最后分类层），提取2048维特征向量
-2. **特征归一化**: 对特征向量进行L2归一化
-3. **相似度计算**: 使用余弦相似度（归一化后等价于点积）
-4. **去重机制**: 计算图片MD5哈希值，相同哈希值只保留一次
-5. **批量处理**: 每10张图片为一组，批量提取特征并保存
-6. **快速检索**: 直接计算所有特征的相似度并排序
+1. **用户发现**：从种子用户出发，递归爬取 `followers` 页面发现新用户
+2. **分页检索**：使用 `seek/peek` 令牌实现相册翻页，内置环路检测防止死循环
+3. **URL 持久化**：按用户名保存至 `urls/`，记录 `trained` 状态避免重复计算
+4. **批量处理**：每次拉取 10 个未训练 URL → 下载 → MD5 校验 → 提取特征 → 标记已训练
+5. **特征索引**：ResNet152 提取 2048 维向量，L2 归一化后使用余弦相似度快速检索
 
-## 注意事项
+## 常见问题
 
-- 首次运行需要下载模型权重（约100MB）
-- 建议使用GPU加速特征提取（代码自动检测）
-- API访问可能需要网络代理
-- 数据库文件会持续累积，定期清理不需要的特征
+**Q: 首次运行很慢？**
+A: 首次需下载 ResNet152 预训练权重（约 230MB），后续运行将直接加载本地缓存。
+
+**Q: 如何清空数据重新开始？**
+A: 删除 `urls/` 目录下所有 JSON 文件及 `features/features_db.pkl`，重启服务即可。
+
+**Q: 支持其他模型吗？**
+A: 系统内置 resnet18/34/50/101/152，在 `config.py` 修改 `MODEL_NAME` 即可切换。
+
+**Q: GPU 显存不足？**
+A: 可改用 CPU 模式，或选择更轻量的模型（如 resnet50）。代码会自动检测设备并降级。
 
 ## 扩展方向
 
-- [ ] 添加GUI界面
-- [ ] 支持实时摄像头搜索
-- [ ] 使用Faiss加速大规模检索
-- [ ] 添加图片预览功能
-- [ ] 支持自定义数据集
+- [ ] 接入 Faiss 向量库加速百万级检索
+- [ ] 支持本地文件夹批量导入
+- [ ] 添加图片分类/标签过滤
+- [ ] 分布式爬虫节点协同
+- [ ] 结果预览缩略图缓存
+
+## 依赖环境
+
+- Python 3.8+
+- PyTorch (推荐 CUDA 版本)
+- Flask
+- BeautifulSoup4
+- Pillow
+- Requests
+
+```bash
+pip install torch torchvision flask beautifulsoup4 pillow requests numpy
+```

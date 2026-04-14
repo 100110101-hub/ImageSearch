@@ -4,3 +4,5 @@ Pillow
 requests
 numpy
 flask
+beautifulsoup4
+lxml
