@@ -26,4 +26,6 @@ Thumbs.db
 
 # Project specific
 images/
-url/
+urls/
+features/
+config/.env

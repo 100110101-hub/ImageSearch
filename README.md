@@ -70,14 +70,20 @@ source .venv/bin/activate # Linux/Mac
 pip install -r requirements.txt
 ```
 
-### 2. 配置
-在 `download_imgbb.py` 中配置 Cookies（如需访问受限内容）：
-```python
-IMGBB_HEADERS = {
-    'Cookie': 'LID=...; PHPSESSID=...',
-    'User-Agent': 'Mozilla/5.0 ...',
-}
+### 2. 配置 Cookies
+复制示例配置文件并填入你的 Cookies：
+```bash
+cp config/.env.example config/.env
 ```
+
+编辑 `config/.env`：
+```env
+IMGBB_COOKIE_LID=your_lid_value_here
+IMGBB_COOKIE_PHPSESSID=your_phpsessid_value_here
+IMGBB_USER_AGENT=Mozilla/5.0 ...
+```
+
+> **注意**: `config/.env` 包含敏感信息，已加入 `.gitignore`，不会提交到版本库。
 
 ### 3. 运行服务
 ```bash

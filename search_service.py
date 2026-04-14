@@ -11,7 +11,7 @@ import threading
 import requests
 from flask import Flask, request, jsonify, send_from_directory, Response
 from config import TOP_K, BASE_DIR
-from download_imgbb import get_sequential_imgbb_urls, discover_users_deeply, IMGBB_HEADERS
+from download_imgbb import get_sequential_imgbb_urls, discover_users_deeply, IMGBB_HEADERS  # headers 从 config/.env 加载
 from feature_extractor import ResNetFeatureExtractor
 from feature_database import FeatureDatabase
 
