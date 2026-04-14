@@ -13,7 +13,7 @@ import numpy as np
 import requests
 from io import BytesIO
 from config import MODEL_NAME, FEATURE_DIM
-from download_imgbb import IMGBB_HEADERS
+from download_imgbb import IMGBB_HEADERS  # headers 从 config/.env 加载
 
 
 class ResNetFeatureExtractor:

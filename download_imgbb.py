@@ -14,7 +14,11 @@ import requests
 from bs4 import BeautifulSoup
 from PIL import Image
 from io import BytesIO
+from dotenv import load_dotenv
 from config import BASE_DIR
+
+# 加载 .env 配置
+load_dotenv(os.path.join(BASE_DIR, 'config', '.env'))
 
 # URL存储目录
 URLS_DIR = os.path.join(BASE_DIR, "urls")
@@ -37,16 +41,16 @@ _current_url_position = 0  # 当前URL文件中的位置（针对未训练URL）
 # 无图片用户黑名单（跳过这些用户）
 _empty_users = set()
 
-# 浏览器headers（使用提供的cookies和UA）
+# 浏览器headers（从.env加载cookies和UA）
 IMGBB_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0',
+    'User-Agent': os.getenv('IMGBB_USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0'),
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
     'sec-ch-ua': '"Microsoft Edge";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
-    'Cookie': 'LID=87Kyyp8p0PGrkD1S18D2P5THCdJGK3svtcTy4WZtsRrsp8qJ; PHPSESSID=lesud58ntnhle8rbp9iprpc5cb',
+    'Cookie': f'LID={os.getenv("IMGBB_COOKIE_LID", "")}; PHPSESSID={os.getenv("IMGBB_COOKIE_PHPSESSID", "")}',
 }
 
 
