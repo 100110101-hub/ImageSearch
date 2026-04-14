@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>以图搜图 - 智能图片搜索</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .search-panel {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .input-group input {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .upload-area {
+            border: 2px dashed #d0d0d0;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 20px;
+        }
+
+        .upload-area:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: #f0f2ff;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 10px;
+        }
+
+        .stats-bar {
+            display: flex;
+            justify-content: space-around;
+            background: #f8f9ff;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .results-container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .results-header h2 {
+            color: #333;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .result-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: all 0.3s;
+            background: white;
+        }
+
+        .result-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        }
+
+        .result-image {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            background: #f0f0f0;
+        }
+
+        .result-info {
+            padding: 15px;
+        }
+
+        .result-similarity {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .similarity-bar {
+            flex: 1;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .similarity-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.5s;
+        }
+
+        .similarity-text {
+            font-weight: bold;
+            color: #667eea;
+            min-width: 60px;
+        }
+
+        .result-url {
+            font-size: 0.85rem;
+            color: #666;
+            word-break: break-all;
+            max-height: 40px;
+            overflow: hidden;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 15px;
+        }
+
+        .error-message {
+            background: #ffe6e6;
+            color: #cc0000;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f0f0f0;
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        #previewImage {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 10px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 以图搜图系统</h1>
+            <p>基于ResNet特征提取的智能图片搜索引擎</p>
+        </div>
+
+        <div class="search-panel">
+            <div class="stats-bar" id="statsBar">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalImages">0</div>
+                    <div class="stat-label">数据库图片</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="featureDim">0</div>
+                    <div class="stat-label">特征维度</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="serviceStatus">-</div>
+                    <div class="stat-label">服务状态</div>
+                </div>
+            </div>
+
+            <div class="tabs">
+                <div class="tab active" data-tab="url">🌐 URL搜索</div>
+                <div class="tab" data-tab="upload">📁 上传图片</div>
+            </div>
+
+            <div class="tab-content active" id="urlTab">
+                <div class="input-group">
+                    <input type="text" id="urlInput" placeholder="输入图片URL (例如: https://example.com/image.jpg)">
+                    <button class="btn btn-primary" onclick="searchByUrl()">🔍 搜索</button>
+                </div>
+            </div>
+
+            <div class="tab-content" id="uploadTab">
+                <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                    <div class="upload-icon">📤</div>
+                    <div>点击或拖拽上传图片</div>
+                    <div style="color: #999; font-size: 0.9rem; margin-top: 5px;">支持 JPG, PNG, GIF 格式</div>
+                </div>
+                <input type="file" id="fileInput" accept="image/*" style="display: none;" onchange="handleFileUpload(event)">
+                <img id="previewImage" alt="预览">
+                <div style="text-align: center; margin-top: 15px;">
+                    <button class="btn btn-primary hidden" id="uploadSearchBtn" onclick="searchByUpload()">🔍 搜索相似图片</button>
+                </div>
+            </div>
+
+            <div class="error-message" id="errorMessage"></div>
+
+            <div style="display: flex; gap: 10px; margin-top: 15px;">
+                <button class="btn btn-secondary" onclick="loadStats()">📊 刷新统计</button>
+                <button class="btn btn-secondary" onclick="randomSearch()">🎲 随机搜索</button>
+            </div>
+        </div>
+
+        <div class="results-container">
+            <div class="results-header">
+                <h2 id="resultsTitle">搜索结果</h2>
+                <div id="resultsCount" style="color: #666;"></div>
+            </div>
+
+            <div id="resultsContent">
+                <div class="empty-state">
+                    <div class="empty-state-icon">🖼️</div>
+                    <div>输入图片URL或上传图片开始搜索</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin; // 自动适配当前服务器地址
+        let uploadedFile = null;
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            setupTabs();
+            setupDragDrop();
+            setupEnterKey();
+        });
+
+        function setupTabs() {
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    
+                    tab.classList.add('active');
+                    document.getElementById(tab.dataset.tab + 'Tab').classList.add('active');
+                });
+            });
+        }
+
+        function setupDragDrop() {
+            const uploadArea = document.getElementById('uploadArea');
+            
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+            });
+
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFileSelect(files[0]);
+                }
+            });
+        }
+
+        function setupEnterKey() {
+            document.getElementById('urlInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    searchByUrl();
+                }
+            });
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`);
+                const stats = await response.json();
+                
+                document.getElementById('totalImages').textContent = stats.total_images;
+                document.getElementById('featureDim').textContent = stats.feature_dim;
+                document.getElementById('serviceStatus').textContent = stats.running ? '运行中' : '已停止';
+            } catch (error) {
+                console.error('加载统计失败:', error);
+                document.getElementById('serviceStatus').textContent = '未连接';
+            }
+        }
+
+        async function searchByUrl() {
+            const url = document.getElementById('urlInput').value.trim();
+            if (!url) {
+                showError('请输入图片URL');
+                return;
+            }
+
+            await performSearch(url);
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                handleFileSelect(file);
+            }
+        }
+
+        function handleFileSelect(file) {
+            if (!file.type.startsWith('image/')) {
+                showError('请选择图片文件');
+                return;
+            }
+
+            uploadedFile = file;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const preview = document.getElementById('previewImage');
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+                document.getElementById('uploadSearchBtn').classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function searchByUpload() {
+            if (!uploadedFile) {
+                showError('请先选择图片');
+                return;
+            }
+
+            // 由于API仅支持URL，这里使用一个临时URL或提示用户
+            // 实际部署时需要后端支持文件上传
+            showError('当前版本仅支持URL搜索，请使用URL搜索功能');
+            
+            // 如果需要支持文件上传，需要在后端添加 /api/upload 接口
+            // const formData = new FormData();
+            // formData.append('image', uploadedFile);
+            // const response = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
+        }
+
+        async function performSearch(queryUrl) {
+            hideError();
+            showLoading();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/search`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        url: queryUrl,
+                        top_k: 10
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                displayResults(data);
+            } catch (error) {
+                showError('搜索失败: ' + error.message);
+            }
+        }
+
+        async function randomSearch() {
+            const randomUrl = `${API_BASE}/api/random`;
+            // 使用当前API URL作为随机查询
+            await performSearch('https://cdn.seovx.com/?mom=302');
+        }
+
+        function displayResults(data) {
+            const container = document.getElementById('resultsContent');
+            const title = document.getElementById('resultsTitle');
+            const count = document.getElementById('resultsCount');
+
+            title.textContent = '搜索结果';
+            count.textContent = `共 ${data.results.length} 个结果`;
+
+            if (data.results.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🔍</div>
+                        <div>未找到相似图片</div>
+                    </div>
+                `;
+                return;
+            }
+
+            const grid = document.createElement('div');
+            grid.className = 'results-grid';
+
+            data.results.forEach((result, index) => {
+                const card = createResultCard(result, index + 1);
+                grid.appendChild(card);
+            });
+
+            container.innerHTML = '';
+            container.appendChild(grid);
+        }
+
+        function createResultCard(result, rank) {
+            const card = document.createElement('div');
+            card.className = 'result-card';
+
+            const similarityPercent = (result.similarity * 100).toFixed(1);
+
+            card.innerHTML = `
+                <img class="result-image" src="${result.image_url}" 
+                     alt="相似图片" 
+                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2280%22>🖼️</text></svg>'">
+                <div class="result-info">
+                    <div class="result-similarity">
+                        <span style="font-weight: bold; color: #666; min-width: 30px;">#${rank}</span>
+                        <div class="similarity-bar">
+                            <div class="similarity-fill" style="width: ${similarityPercent}%"></div>
+                        </div>
+                        <span class="similarity-text">${similarityPercent}%</span>
+                    </div>
+                    <div class="result-url" title="${result.url}">${result.url}</div>
+                </div>
+            `;
+
+            return card;
+        }
+
+        function showLoading() {
+            document.getElementById('resultsContent').innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div>正在搜索相似图片...</div>
+                </div>
+            `;
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        function hideError() {
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
