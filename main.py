@@ -6,8 +6,8 @@
 import os
 import time
 import random
-from config import IMAGES_DIR, FEATURES_DIR, TOP_K, API_URL
-from download_images import download_batch_images, download_random_image, fetch_image_bytes
+from config import IMAGES_DIR, FEATURES_DIR, TOP_K
+from download_imgbb import fetch_imgbb_images, fetch_random_imgbb_image
 from feature_extractor import ResNetFeatureExtractor
 from feature_database import FeatureDatabase
 
@@ -43,7 +43,7 @@ class ImageSearchEngine:
         print("=" * 60)
         
         # 获取图片URL和哈希
-        url_hash_pairs = download_batch_images(count=image_count, delay=delay)
+        url_hash_pairs = fetch_imgbb_images(max_pages=max(1, image_count // 20))
         
         if not url_hash_pairs:
             print("没有成功获取任何图片")

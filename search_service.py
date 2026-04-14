@@ -10,8 +10,8 @@ import time
 import threading
 import requests
 from flask import Flask, request, jsonify, send_from_directory, Response
-from config import TOP_K, API_URL, BASE_DIR
-from download_images import download_random_image, HEADERS
+from config import TOP_K, BASE_DIR
+from download_imgbb import get_sequential_imgbb_urls, discover_users_deeply, IMGBB_HEADERS
 from feature_extractor import ResNetFeatureExtractor
 from feature_database import FeatureDatabase
 
@@ -38,6 +38,7 @@ class ImageSearchService:
         self.running = False
         self.download_count = 0
         self.total_downloaded = 0
+        self._direct_url_cache = {}  # 缓存页面URL→直接图片URL的映射
         
         print("服务初始化完成!\n")
     
@@ -45,40 +46,60 @@ class ImageSearchService:
         """
         持续下载图片并提取特征
         参数:
-            interval: 每张图片下载间隔（秒）
+            interval: 每批次处理间隔（秒）
             batch_size: 每批处理数量（默认10）
         """
         self.running = True
         print(f"\n开始持续下载模式 (间隔: {interval}s, 批次: {batch_size})")
+        print("图片来源: imgbb")
         print("按 Ctrl+C 停止...\n")
-        
-        batch_urls = []
-        batch_hashes = []
         
         while self.running:
             try:
-                print(f"[下载] 第 {self.total_downloaded + 1} 张...")
-                result = download_random_image()
+                print(f"[下载] 正在获取 {batch_size} 个图片URL...")
                 
-                if result[0]:
-                    url, img_hash = result
+                # 获取一批图片URL（不下载图片）
+                urls = get_sequential_imgbb_urls(batch_size=batch_size)
+                
+                if not urls:
+                    print("[下载] 没有获取到URL，等待后重试...")
+                    time.sleep(interval)
+                    continue
+                
+                print(f"[下载] 获取到 {len(urls)} 个URL，开始下载和处理...")
+                
+                # 下载图片、计算哈希、提取特征（在处理前自动计算哈希）
+                results = self.extractor.download_and_extract_batch(urls)
+                
+                if results:
+                    # 去重并添加到数据库
+                    added = 0
+                    skipped = 0
                     
-                    # 检查重复
-                    if not self.db.is_duplicate(img_hash):
-                        batch_urls.append(url)
-                        batch_hashes.append(img_hash)
-                        self.total_downloaded += 1
-                        print(f"  ✓ 已获取 (hash: {img_hash[:8]})")
+                    for url, image_hash, feature in results:
+                        if not self.db.is_duplicate(image_hash):
+                            self.db.add_feature(url, image_hash, feature)
+                            added += 1
+                            self.total_downloaded += 1
+                            # 标记URL为已训练
+                            from download_imgbb import mark_url_as_trained
+                            mark_url_as_trained(None, url)  # 自动查找用户
+                            print(f"  ✓ 已添加 (hash: {image_hash[:8]})")
+                        else:
+                            skipped += 1
+                            # 即使重复也标记为已训练，避免重复处理
+                            from download_imgbb import mark_url_as_trained
+                            mark_url_as_trained(None, url)
+                            print(f"  ✗ 重复跳过 (hash: {image_hash[:8]})")
+                    
+                    # 保存数据库
+                    if added > 0:
+                        self.db.save()
+                        print(f"[保存] 数据库已更新: 新增 {added}, 跳过 {skipped}, 当前共 {len(self.db.image_urls)} 张图片\n")
                     else:
-                        print(f"  ✗ 重复跳过 (hash: {img_hash[:8]})")
+                        print(f"[跳过] 本批次全部重复，跳过 {skipped} 张\n")
                 else:
-                    print(f"  ✗ 获取失败")
-                
-                # 每10张处理一次
-                if len(batch_urls) >= batch_size:
-                    self._process_batch(batch_urls, batch_hashes)
-                    batch_urls = []
-                    batch_hashes = []
+                    print("[警告] 没有成功处理任何图片\n")
                 
                 time.sleep(interval)
                 
@@ -88,28 +109,11 @@ class ImageSearchService:
                 break
             except Exception as e:
                 print(f"  ✗ 错误: {e}")
+                import traceback
+                traceback.print_exc()
                 time.sleep(interval)
         
-        # 处理剩余图片
-        if batch_urls:
-            self._process_batch(batch_urls, batch_hashes)
-        
         print("下载服务已停止")
-    
-    def _process_batch(self, urls, hashes):
-        """处理一批图片URL"""
-        print(f"\n[处理] 正在提取 {len(urls)} 张图片特征...")
-        
-        # 提取特征
-        features = self.extractor.extract_features_batch(urls)
-        
-        if features:
-            url_hash_pairs = list(zip(urls, hashes))
-            self.db.add_features(url_hash_pairs, features)
-            self.db.save()
-            print(f"[保存] 数据库已更新，当前共 {len(self.db.image_urls)} 张图片\n")
-        else:
-            print("[警告] 没有成功提取任何特征\n")
     
     def stop(self):
         """停止服务"""
@@ -176,6 +180,8 @@ def api_stats():
 @app.route('/api/image/<int:index>', methods=['GET'])
 def api_get_image(index):
     """代理获取图片，避免浏览器缓存"""
+    from download_imgbb import get_direct_image_url, IMGBB_HEADERS
+    
     # 从数据库获取图片URL
     if index >= len(engine.db.image_urls):
         return jsonify({"error": "图片不存在"}), 404
@@ -183,11 +189,22 @@ def api_get_image(index):
     image_url = engine.db.image_urls[index]
     
     try:
+        # 如果是ibb.co页面URL，先获取直接图片URL（使用缓存）
+        direct_url = image_url
+        if 'ibb.co/' in image_url and 'i.ibb.co' not in image_url:
+            if image_url in engine._direct_url_cache:
+                direct_url = engine._direct_url_cache[image_url]
+            else:
+                direct_url = get_direct_image_url(image_url)
+                if not direct_url:
+                    return jsonify({"error": "无法获取直接图片URL"}), 500
+                engine._direct_url_cache[image_url] = direct_url
+        
         # 添加时间戳参数避免缓存
         timestamp = int(time.time() * 1000)
-        cache_busted_url = f"{image_url}{'&' if '?' in image_url else '?'}_t={timestamp}"
+        cache_busted_url = f"{direct_url}{'&' if '?' in direct_url else '?'}_t={timestamp}"
         
-        response = requests.get(cache_busted_url, headers=HEADERS, timeout=30)
+        response = requests.get(cache_busted_url, headers=IMGBB_HEADERS, timeout=30)
         response.raise_for_status()
         
         return Response(response.content, mimetype='image/jpeg')
@@ -237,6 +254,13 @@ def main():
     
     # 初始化服务
     engine = ImageSearchService()
+    
+    # 先发现一批用户
+    print("\n" + "=" * 60)
+    print("正在发现imgbb用户...")
+    print("=" * 60)
+    discover_users_deeply(max_total_users=50)
+    print()
     
     # 启动持续下载线程
     download_thread = threading.Thread(
