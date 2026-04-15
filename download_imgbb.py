@@ -24,6 +24,9 @@ load_dotenv(os.path.join(BASE_DIR, 'config', '.env'))
 URLS_DIR = os.path.join(BASE_DIR, "urls")
 os.makedirs(URLS_DIR, exist_ok=True)
 
+# 已发现用户持久化文件
+DISCOVERED_USERS_FILE = os.path.join(URLS_DIR, "discovered_users.json")
+
 # 种子用户（从这里开始发现更多用户）
 IMGBB_SEED_USERS = [
     'https://tyx199324.imgbb.com/',
@@ -31,7 +34,7 @@ IMGBB_SEED_USERS = [
 
 # 已发现用户池（运行时动态扩展）
 _discovered_users = set()
-_user_list = []
+_user_list = []  # [{"url": "https://xxx.imgbb.com/", "fully_crawled": bool, "used_for_discovery": bool}, ...]
 
 # 顺序获取图片的状态
 _current_user_index = 0
@@ -40,6 +43,81 @@ _current_url_position = 0  # 当前URL文件中的位置（针对未训练URL）
 
 # 无图片用户黑名单（跳过这些用户）
 _empty_users = set()
+
+
+def load_discovered_users():
+    """从硬盘加载已发现用户列表"""
+    global _user_list, _discovered_users
+    
+    if os.path.exists(DISCOVERED_USERS_FILE):
+        with open(DISCOVERED_USERS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        _user_list = data.get("users", [])
+        _discovered_users = {u["url"] for u in _user_list}
+        
+        # 兼容旧格式（纯字符串列表）
+        if _user_list and isinstance(_user_list[0], str):
+            _user_list = [{"url": u, "fully_crawled": False} for u in _user_list]
+        
+        print(f"[用户池] 从硬盘加载 {len(_user_list)} 个用户")
+    else:
+        # 初始化种子用户
+        for user in IMGBB_SEED_USERS:
+            normalized = normalize_user_url(user)
+            if normalized not in _discovered_users:
+                _discovered_users.add(normalized)
+                # 默认种子用户已完全爬取（根据用户指示）
+                is_fully_crawled = (normalized == 'https://tyx199324.imgbb.com/')
+                _user_list.append({"url": normalized, "fully_crawled": is_fully_crawled})
+        
+        save_discovered_users()
+        print(f"[用户池] 初始化 {len(_user_list)} 个种子用户")
+
+
+def save_discovered_users():
+    """保存已发现用户列表到硬盘"""
+    data = {"users": _user_list}
+    with open(DISCOVERED_USERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    
+    fully_crawled_count = sum(1 for u in _user_list if u.get("fully_crawled", False))
+    used_discovery_count = sum(1 for u in _user_list if u.get("used_for_discovery", False))
+    print(f"[用户池] 保存 {len(_user_list)} 个用户（已完全爬取 {fully_crawled_count}，已用于发现 {used_discovery_count}）到 {DISCOVERED_USERS_FILE}")
+
+
+def mark_user_fully_crawled(user_url):
+    """标记用户已完全爬取"""
+    for u in _user_list:
+        if u["url"] == user_url:
+            u["fully_crawled"] = True
+            break
+    save_discovered_users()
+
+
+def is_user_fully_crawled(user_url):
+    """检查用户是否已完全爬取"""
+    for u in _user_list:
+        if u["url"] == user_url:
+            return u.get("fully_crawled", False)
+    return False
+
+
+def mark_user_used_for_discovery(user_url):
+    """标记用户已用于发现新用户"""
+    for u in _user_list:
+        if u["url"] == user_url:
+            u["used_for_discovery"] = True
+            break
+    save_discovered_users()
+
+
+def is_user_used_for_discovery(user_url):
+    """检查用户是否已用于发现新用户"""
+    for u in _user_list:
+        if u["url"] == user_url:
+            return u.get("used_for_discovery", False)
+    return False
 
 # 浏览器headers（从.env加载cookies和UA）
 IMGBB_HEADERS = {
@@ -64,60 +142,89 @@ def normalize_user_url(url):
 
 
 def get_discovered_users():
-    """获取已发现的用户列表"""
+    """获取已发现的用户列表（返回 URL 列表）"""
     if not _user_list:
-        # 初始化种子用户
-        for user in IMGBB_SEED_USERS:
-            normalized = normalize_user_url(user)
-            if normalized not in _discovered_users:
-                _discovered_users.add(normalized)
-                _user_list.append(normalized)
+        load_discovered_users()
+    return [u["url"] for u in _user_list]
+
+
+def get_user_list_with_status():
+    """获取带状态的用户列表"""
+    if not _user_list:
+        load_discovered_users()
     return list(_user_list)
 
 
-def discover_users_from_followers(user_url, max_users=50):
+def discover_users_from_followers(user_url, max_users=100, max_follower_pages=5):
     """
-    从用户的followers页面发现更多用户
+    从用户的followers页面发现更多用户（支持分页）
     参数:
         user_url: 用户主页URL
         max_users: 最多发现多少用户
+        max_follower_pages: 最多爬取多少页followers
     返回: 新发现的用户URL列表
     """
     new_users = []
-    followers_url = user_url.rstrip('/') + '/followers'
+    base_url = user_url.rstrip('/')
+    followers_base = base_url + '/followers'
+    page_count = 0
     
-    print(f"[用户发现] 正在从 {followers_url} 发现新用户...")
+    print(f"[用户发现] 正在从 {followers_base} 发现新用户（最多 {max_follower_pages} 页）...")
     
-    soup = fetch_imgbb_page(followers_url)
-    if soup is None:
-        return new_users
-    
-    # 提取用户链接
-    # 模式: <a href="https://xxx.imgbb.com/">用户名</a>
+    # 提取用户链接的正则
     user_pattern = re.compile(r'https?://[a-zA-Z0-9_-]+\.imgbb\.com/?')
     
-    for a_tag in soup.find_all('a', href=True):
-        href = a_tag['href']
+    while page_count < max_follower_pages:
+        page_count += 1
+        current_url = followers_base if page_count == 1 else f"{followers_base}?page={page_count}"
         
-        # 匹配imgbb用户主页链接
-        match = user_pattern.match(href)
-        if match:
-            user_href = match.group(0)
-            normalized = normalize_user_url(user_href)
-            
-            # 跳过已发现的用户和特殊页面
-            if normalized in _discovered_users:
-                continue
-            if '/followers' in normalized or '/following' in normalized or '/albums' in normalized:
-                continue
-            
-            # 添加到用户池
-            _discovered_users.add(normalized)
-            _user_list.append(normalized)
-            new_users.append(normalized)
-            
+        print(f"[用户发现] 爬取 followers 第 {page_count} 页: {current_url}")
+        
+        soup = fetch_imgbb_page(current_url)
+        if soup is None:
+            print(f"[用户发现] 页面获取失败")
+            break
+        
+        found_on_page = 0
+        for a_tag in soup.find_all('a', href=True):
             if len(new_users) >= max_users:
                 break
+                
+            href = a_tag['href']
+            
+            # 匹配imgbb用户主页链接
+            match = user_pattern.match(href)
+            if match:
+                user_href = match.group(0)
+                normalized = normalize_user_url(user_href)
+                
+                # 跳过已发现的用户和特殊页面
+                if normalized in _discovered_users:
+                    continue
+                if '/followers' in normalized or '/following' in normalized or '/albums' in normalized:
+                    continue
+                
+                # 添加到用户池
+                _discovered_users.add(normalized)
+                _user_list.append({"url": normalized, "fully_crawled": False, "used_for_discovery": False})
+                new_users.append(normalized)
+                found_on_page += 1
+        
+        print(f"[用户发现] 第 {page_count} 页发现 {found_on_page} 个新用户")
+        
+        # 如果本页没发现新用户，说明已到底部
+        if found_on_page == 0:
+            print(f"[用户发现] 第 {page_count} 页无新用户，停止爬取")
+            break
+        
+        if len(new_users) >= max_users:
+            break
+        
+        time.sleep(1)  # 翻页间隔
+    
+    # 保存更新后的用户列表
+    if new_users:
+        save_discovered_users()
     
     print(f"[用户发现] 新发现 {len(new_users)} 个用户，当前用户池共 {len(_user_list)} 个")
     return new_users
@@ -126,11 +233,16 @@ def discover_users_from_followers(user_url, max_users=50):
 def discover_users_deeply(max_total_users=100):
     """
     深度发现用户：遍历已发现用户的followers
+    跳过已用于发现新用户的用户，防止反复爬取同一用户的followers
     参数:
         max_total_users: 最大用户总数
     返回: 所有发现的用户列表
     """
     all_new = []
+    
+    # 确保用户池已加载
+    if not _user_list:
+        load_discovered_users()
     
     # 遍历现有用户，发现他们的followers
     existing_users = get_discovered_users()
@@ -139,9 +251,17 @@ def discover_users_deeply(max_total_users=100):
         if len(_user_list) >= max_total_users:
             break
         
+        # 跳过已用于发现新用户的用户
+        if is_user_used_for_discovery(user_url):
+            print(f"[用户发现] 用户 {user_url} 已用于发现新用户，跳过")
+            continue
+        
         new_users = discover_users_from_followers(user_url)
         all_new.extend(new_users)
-        time.sleep(1)  # 避免请求过快
+        
+        # 标记该用户已用于发现
+        mark_user_used_for_discovery(user_url)
+        time.sleep(0.1)  # 避免请求过快
     
     return all_new
 
@@ -347,7 +467,7 @@ def fetch_imgbb_images(max_pages=10, user_urls=None):
                     else:
                         # 否则从图片页面获取直接URL
                         direct_url = get_direct_image_url(page_url)
-                        time.sleep(1)  # 避免请求过快
+                        time.sleep(0.1)  # 避免请求过快
                     
                     if direct_url:
                         image, image_bytes = fetch_image_from_url(direct_url)
@@ -356,7 +476,7 @@ def fetch_imgbb_images(max_pages=10, user_urls=None):
                             if img_hash:
                                 results.append((direct_url, img_hash))
                                 print(f"  ✓ 获取成功: {title or direct_url[-30:]}")
-                                time.sleep(0.5)
+                                time.sleep(0.1)
                 except Exception as e:
                     print(f"  ✗ 处理失败: {e}")
             
@@ -364,7 +484,7 @@ def fetch_imgbb_images(max_pages=10, user_urls=None):
             next_url = get_next_page_url(current_url, soup)
             if next_url:
                 current_url = next_url
-                time.sleep(2)  # 翻页间隔
+                time.sleep(1)  # 翻页间隔
             else:
                 print(f"[imgbb] 没有更多页面")
                 break
@@ -412,7 +532,7 @@ def fetch_imgbb_images_from_user(user_url, max_pages=10):
                     direct_url = page_url
                 else:
                     direct_url = get_direct_image_url(page_url)
-                    time.sleep(1)
+                    time.sleep(0.1)
                 
                 if direct_url:
                     image, image_bytes = fetch_image_from_url(direct_url)
@@ -421,7 +541,7 @@ def fetch_imgbb_images_from_user(user_url, max_pages=10):
                         if img_hash:
                             results.append((direct_url, img_hash))
                             print(f"  ✓ 获取成功: {title or direct_url[-30:]}")
-                            time.sleep(0.5)
+                            time.sleep(0.1)
             except Exception as e:
                 print(f"  ✗ 处理失败: {e}")
         
@@ -429,7 +549,7 @@ def fetch_imgbb_images_from_user(user_url, max_pages=10):
         next_url = get_next_page_url(current_url, soup)
         if next_url:
             current_url = next_url
-            time.sleep(2)
+            time.sleep(1)
         else:
             break
     
@@ -652,7 +772,7 @@ def fetch_imgbb_user_image_urls(user_url, max_pages=None):
             print(f"[URL获取] 没有下一页链接")
             break
         
-        time.sleep(1)
+        time.sleep(0.5)
         
         # 检查最大页数限制
         if max_pages and page_count >= max_pages:
@@ -662,6 +782,8 @@ def fetch_imgbb_user_image_urls(user_url, max_pages=None):
     # 保存到硬盘
     if results:
         save_user_urls(user_url, {"urls": results})
+        # 标记该用户已完全爬取
+        mark_user_fully_crawled(user_url)
     
     print(f"[URL获取] 共收集 {len(results)} 个图片页面URL")
     return {"urls": results}
@@ -709,6 +831,10 @@ def get_next_user_url_file(user_index=None):
     """获取下一个有未训练URL的用户"""
     global _current_user_index, _current_url_file, _current_url_position
     
+    # 确保用户池已加载
+    if not _user_list:
+        load_discovered_users()
+    
     users = get_discovered_users()
     if not users:
         return None, None
@@ -734,8 +860,16 @@ def get_next_user_url_file(user_index=None):
         
         url_file = get_user_url_filename(user_url)
         
-        # 如果文件不存在，先爬取并保存
+        # 如果文件不存在
         if not url_file or not os.path.exists(url_file):
+            # 已完全爬取的用户不再发起新的爬取请求
+            if is_user_fully_crawled(user_url):
+                print(f"[URL获取] 用户 {user_url} 已完全爬取且无本地URL文件，跳过")
+                _current_user_index += 1
+                _current_url_position = 0
+                continue
+            
+            # 未完全爬取的用户，尝试爬取
             print(f"[URL获取] 正在爬取用户URL: {user_url}")
             url_data = fetch_imgbb_user_image_urls(user_url)
             urls = url_data.get("urls", []) if isinstance(url_data, dict) else []
