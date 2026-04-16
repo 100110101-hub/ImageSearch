@@ -76,22 +76,52 @@ def load_discovered_users():
 
 
 def save_discovered_users():
-    """保存已发现用户列表到硬盘"""
+    """保存已发现用户列表到硬盘（原子写入，防止损坏）"""
+    # 安全检查：如果列表为空且硬盘上已有文件，不覆盖
+    if not _user_list and os.path.exists(DISCOVERED_USERS_FILE):
+        print(f"[用户池] 警告：内存中用户列表为空，为防止丢失数据，取消本次保存")
+        return
+
     data = {"users": _user_list}
-    with open(DISCOVERED_USERS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    temp_file = DISCOVERED_USERS_FILE + ".tmp"
     
-    fully_crawled_count = sum(1 for u in _user_list if u.get("fully_crawled", False))
-    used_discovery_count = sum(1 for u in _user_list if u.get("used_for_discovery", False))
-    print(f"[用户池] 保存 {len(_user_list)} 个用户（已完全爬取 {fully_crawled_count}，已用于发现 {used_discovery_count}）到 {DISCOVERED_USERS_FILE}")
+    try:
+        # 1. 先写入临时文件
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        # 2. 替换原文件（原子操作）
+        if os.path.exists(DISCOVERED_USERS_FILE):
+            os.replace(temp_file, DISCOVERED_USERS_FILE)
+        else:
+            os.rename(temp_file, DISCOVERED_USERS_FILE)
+            
+        fully_crawled_count = sum(1 for u in _user_list if u.get("fully_crawled", False))
+        used_discovery_count = sum(1 for u in _user_list if u.get("used_for_discovery", False))
+        print(f"[用户池] 保存 {len(_user_list)} 个用户（已完全爬取 {fully_crawled_count}，已用于发现 {used_discovery_count}）到 {DISCOVERED_USERS_FILE}")
+    except Exception as e:
+        print(f"[用户池] 保存失败: {e}")
+        # 清理临时文件
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
 
 
 def mark_user_fully_crawled(user_url):
-    """标记用户已完全爬取"""
+    """标记用户已完全爬取（安全版：若列表未加载则自动加载）"""
+    # 防御性编程：如果用户列表为空但硬盘上有文件，先加载以防覆盖
+    if not _user_list and os.path.exists(DISCOVERED_USERS_FILE):
+        print(f"[用户池] 警告：用户列表为空，尝试重新加载...")
+        load_discovered_users()
+
     for u in _user_list:
         if u["url"] == user_url:
             u["fully_crawled"] = True
-            break
+            save_discovered_users()
+            return
+
+    # 如果没找到，添加新用户
+    print(f"[用户池] 用户 {user_url} 未在列表中，自动添加并标记")
+    _user_list.append({"url": user_url, "fully_crawled": True, "used_for_discovery": False})
     save_discovered_users()
 
 
@@ -570,8 +600,17 @@ def load_user_urls(user_url):
     """从硬盘加载用户的URL列表（带训练标记）"""
     filename = get_user_url_filename(user_url)
     if filename and os.path.exists(filename):
-        with open(filename, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if not content:
+                    # 空文件，返回默认结构
+                    return {"urls": []}
+                data = json.loads(content)
+        except json.JSONDecodeError as e:
+            print(f"[警告] JSON解析失败 {filename}: {e}，使用空数据")
+            return {"urls": []}
+        
         # 兼容旧格式（纯列表）
         if isinstance(data, list):
             return {"urls": [{"url": u, "trained": False} for u in data]}
@@ -874,7 +913,8 @@ def get_next_user_url_file(user_index=None):
             url_data = fetch_imgbb_user_image_urls(user_url)
             urls = url_data.get("urls", []) if isinstance(url_data, dict) else []
             if not urls:
-                print(f"[URL获取] 用户 {user_url} 没有图片，加入跳过列表")
+                print(f"[URL获取] 用户 {user_url} 没有图片，标记为已完全爬取并跳过")
+                mark_user_fully_crawled(user_url)
                 _empty_users.add(user_url)
                 _current_user_index += 1
                 _current_url_position = 0

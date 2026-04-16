@@ -1,17 +1,20 @@
 """
 以图搜图服务 - 持续运行模式 + HTTP搜索接口
 功能：
-1. 持续下载图片并提取特征（每10张自动保存）
+1. 持续下载图片并提取特征（每30张自动保存）
 2. 提供HTTP API进行图片搜索
 3. 提供图形化Web界面
+4. 安全退出机制（Ctrl+Q 或 Ctrl+C）
 """
 import os
+import sys
+import signal
 import time
 import threading
 import requests
 from flask import Flask, request, jsonify, send_from_directory, Response
 from config import TOP_K, BASE_DIR
-from download_imgbb import get_sequential_imgbb_urls, discover_users_deeply, IMGBB_HEADERS  # headers 从 config/.env 加载
+from download_imgbb import get_sequential_imgbb_urls, discover_users_deeply, IMGBB_HEADERS, save_discovered_users  # headers 从 config/.env 加载
 from feature_extractor import ResNetFeatureExtractor
 from feature_database import FeatureDatabase
 
@@ -42,12 +45,12 @@ class ImageSearchService:
         
         print("服务初始化完成!\n")
     
-    def start_continuous_download(self, interval=0.3, batch_size=30):
+    def start_continuous_download(self, interval=0.3, batch_size=45):
         """
         持续下载图片并提取特征
         参数:
             interval: 每批次处理间隔（秒）
-            batch_size: 每批处理数量（默认30）
+            batch_size: 每批处理数量（默认45）
         """
         self.running = True
         print(f"\n开始持续下载模式 (间隔: {interval}s, 批次: {batch_size})")
@@ -248,9 +251,82 @@ def api_index():
     })
 
 
+def safe_exit():
+    """安全退出：保存所有状态"""
+    print("\n\n" + "=" * 60)
+    print("正在安全退出...")
+    print("=" * 60)
+    
+    # 1. 停止下载服务
+    if engine:
+        engine.stop()
+        print("✓ 下载服务停止信号已发送")
+        
+        # 等待下载线程真正结束（防止正在写入时打断）
+        if download_thread and download_thread.is_alive():
+            print("  等待下载线程结束...")
+            download_thread.join(timeout=5.0)
+            if download_thread.is_alive():
+                print("  ⚠ 线程未在规定时间内结束，强制继续")
+            else:
+                print("✓ 下载线程已结束")
+        
+        # 保存特征数据库
+        try:
+            engine.db.save()
+            print("✓ 特征数据库已保存")
+        except Exception as e:
+            print(f"✗ 数据库保存失败: {e}")
+    
+    # 2. 安全保存用户发现状态（防止空列表覆盖有效数据）
+    try:
+        from download_imgbb import _user_list, DISCOVERED_USERS_FILE
+        import os
+        
+        # 检查内存中的列表是否为空
+        if not _user_list:
+            # 如果内存为空，但硬盘上有文件，说明内存状态可能丢失
+            if os.path.exists(DISCOVERED_USERS_FILE):
+                print("  ⚠ 警告：内存中用户列表为空，为防止覆盖硬盘数据，跳过保存")
+                print("  建议：检查 discovered_users.json 是否完好")
+            else:
+                print("  ⚠ 警告：内存中用户列表为空，保存空列表")
+                save_discovered_users()
+        else:
+            # 内存中有数据，正常保存
+            save_discovered_users()
+            print("✓ 用户发现状态已保存")
+    except Exception as e:
+        print(f"✗ 用户状态保存失败: {e}")
+    
+    print("=" * 60)
+    print("安全退出完成！")
+    print("=" * 60)
+    sys.exit(0)
+
+
+def signal_handler(signum, frame):
+    """信号处理器"""
+    if signum == signal.SIGINT:
+        # Ctrl+C 触发的 SIGINT
+        safe_exit()
+    elif signum == signal.SIGTERM:
+        # Ctrl+Break 或其他终止信号
+        safe_exit()
+
+
 def main():
     """主函数"""
     global engine
+    
+    # 注册信号处理器（Windows 只支持 SIGINT）
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    print("\n" + "=" * 60)
+    print("安全退出快捷键说明:")
+    print("  Ctrl+C  - 安全退出（自动保存所有状态）")
+    print("=" * 60 + "\n")
     
     # 初始化服务
     engine = ImageSearchService()
@@ -265,7 +341,7 @@ def main():
     # 启动持续下载线程
     download_thread = threading.Thread(
         target=engine.start_continuous_download,
-        kwargs={"interval": 0.3, "batch_size": 30},
+        kwargs={"interval": 0.3, "batch_size": 45},
         daemon=True
     )
     download_thread.start()
@@ -278,8 +354,10 @@ def main():
     try:
         app.run(host='0.0.0.0', port=5000, debug=False)
     except KeyboardInterrupt:
-        print("\n服务已停止")
-        engine.stop()
+        safe_exit()
+    except Exception as e:
+        print(f"\nFlask服务异常: {e}")
+        safe_exit()
 
 
 if __name__ == "__main__":

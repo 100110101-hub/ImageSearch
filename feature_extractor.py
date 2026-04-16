@@ -136,13 +136,13 @@ class ResNetFeatureExtractor:
             print(f"提取特征失败 {source}: {e}")
             return None
     
-    def download_and_extract_batch(self, urls, max_workers=10):
+    def download_and_extract_batch(self, urls, max_workers=15):
         """
         多线程批量下载图片，计算哈希，提取特征
         支持ibb.co页面URL或直接图片URL
-        参数:
+        参数：
             urls: 图片URL列表（ibb.co页面URL或直接图片URL）
-            max_workers: 最大线程数
+            max_workers: 最大线程数（默认15）
         返回: [(url, image_hash, feature), ...] 成功列表
         """
         import hashlib
