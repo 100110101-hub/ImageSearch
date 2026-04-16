@@ -42,7 +42,7 @@ class ImageSearchService:
         
         print("服务初始化完成!\n")
     
-    def start_continuous_download(self, interval=2.0, batch_size=10):
+    def start_continuous_download(self, interval=0.3, batch_size=10):
         """
         持续下载图片并提取特征
         参数:
@@ -265,7 +265,7 @@ def main():
     # 启动持续下载线程
     download_thread = threading.Thread(
         target=engine.start_continuous_download,
-        kwargs={"interval": 2.0, "batch_size": 10},
+        kwargs={"interval": 0.3, "batch_size": 10},
         daemon=True
     )
     download_thread.start()

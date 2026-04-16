@@ -162,7 +162,7 @@ class ResNetFeatureExtractor:
                     if not direct_url:
                         print(f"  ✗ 无法获取直接URL: {url}")
                         continue
-                    time.sleep(0.3)
+                    time.sleep(0.1)
                 
                 # 下载图片
                 response = requests.get(direct_url.split('#')[0], headers=IMGBB_HEADERS, timeout=30)

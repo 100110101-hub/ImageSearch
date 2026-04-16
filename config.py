@@ -22,4 +22,4 @@ FEATURE_DIM = 2048  # ResNet50/101/152的特征维度
 
 # 搜索配置
 TOP_K = 20  # 返回最相似的K张图片
-SIMILARITY_THRESHOLD = 0.5  # 相似度阈值
+SIMILARITY_THRESHOLD = 0.3  # 相似度阈值

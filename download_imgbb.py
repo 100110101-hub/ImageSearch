@@ -220,7 +220,7 @@ def discover_users_from_followers(user_url, max_users=100, max_follower_pages=5)
         if len(new_users) >= max_users:
             break
         
-        time.sleep(1)  # 翻页间隔
+        time.sleep(0.1)  # 翻页间隔
     
     # 保存更新后的用户列表
     if new_users:
@@ -484,7 +484,7 @@ def fetch_imgbb_images(max_pages=10, user_urls=None):
             next_url = get_next_page_url(current_url, soup)
             if next_url:
                 current_url = next_url
-                time.sleep(1)  # 翻页间隔
+                time.sleep(0.1)  # 翻页间隔
             else:
                 print(f"[imgbb] 没有更多页面")
                 break
@@ -549,7 +549,7 @@ def fetch_imgbb_images_from_user(user_url, max_pages=10):
         next_url = get_next_page_url(current_url, soup)
         if next_url:
             current_url = next_url
-            time.sleep(1)
+            time.sleep(0.1)
         else:
             break
     
@@ -772,7 +772,7 @@ def fetch_imgbb_user_image_urls(user_url, max_pages=None):
             print(f"[URL获取] 没有下一页链接")
             break
         
-        time.sleep(0.5)
+        time.sleep(0.1)
         
         # 检查最大页数限制
         if max_pages and page_count >= max_pages:
