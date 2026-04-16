@@ -17,12 +17,12 @@ from io import BytesIO
 from dotenv import load_dotenv
 from config import BASE_DIR
 
-# 加载 .env 配置
-load_dotenv(os.path.join(BASE_DIR, 'config', '.env'))
-
 # URL存储目录
 URLS_DIR = os.path.join(BASE_DIR, "urls")
 os.makedirs(URLS_DIR, exist_ok=True)
+
+# 加载 .env 配置
+load_dotenv(os.path.join(BASE_DIR, 'config', '.env'))
 
 # 已发现用户持久化文件
 DISCOVERED_USERS_FILE = os.path.join(URLS_DIR, "discovered_users.json")

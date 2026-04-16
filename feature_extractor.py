@@ -136,33 +136,33 @@ class ResNetFeatureExtractor:
             print(f"提取特征失败 {source}: {e}")
             return None
     
-    def download_and_extract_batch(self, urls, batch_size=32):
+    def download_and_extract_batch(self, urls, max_workers=10):
         """
-        批量下载图片，计算哈希，提取特征
+        多线程批量下载图片，计算哈希，提取特征
         支持ibb.co页面URL或直接图片URL
         参数:
             urls: 图片URL列表（ibb.co页面URL或直接图片URL）
-            batch_size: 批次大小
+            max_workers: 最大线程数
         返回: [(url, image_hash, feature), ...] 成功列表
         """
         import hashlib
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         from download_imgbb import get_direct_image_url
         
         results = []
-        print(f"开始批量处理 {len(urls)} 张图片...")
+        lock = __import__('threading').Lock()
+        print(f"开始多线程批量处理 {len(urls)} 张图片（线程数: {max_workers}）...")
         
-        for i, url in enumerate(urls):
+        def process_single_url(url):
+            """处理单个URL（下载+哈希+特征提取）"""
             try:
                 direct_url = url
                 
                 # 如果是ibb.co页面URL，先获取直接图片URL
                 if 'ibb.co/' in url and 'i.ibb.co' not in url:
-                    print(f"  [{i+1}/{len(urls)}] 获取直接URL: {url[-40:]}...")
                     direct_url = get_direct_image_url(url)
                     if not direct_url:
-                        print(f"  ✗ 无法获取直接URL: {url}")
-                        continue
-                    time.sleep(0.1)
+                        return (url, None, None, False, "无法获取直接URL")
                 
                 # 下载图片
                 response = requests.get(direct_url.split('#')[0], headers=IMGBB_HEADERS, timeout=30)
@@ -184,13 +184,33 @@ class ResNetFeatureExtractor:
                 feature = feature.squeeze().cpu().numpy()
                 feature = feature / np.linalg.norm(feature)
                 
-                results.append((url, image_hash, feature))
-                print(f"  ✓ 已处理 {i+1}/{len(urls)} (hash: {image_hash[:8]})")
+                return (url, image_hash, feature, True, None)
                 
             except Exception as e:
-                print(f"  ✗ 处理失败 {url}: {e}")
+                return (url, None, None, False, str(e))
         
-        print(f"批量处理完成! 成功 {len(results)}/{len(urls)} 张")
+        # 使用线程池并发处理
+        success_count = 0
+        fail_count = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_to_url = {executor.submit(process_single_url, url): url for url in urls}
+            
+            # 收集结果
+            for future in as_completed(future_to_url):
+                url, image_hash, feature, success, error = future.result()
+                
+                with lock:
+                    if success:
+                        results.append((url, image_hash, feature))
+                        success_count += 1
+                        print(f"  ✓ 已处理 ({success_count}/{len(urls)}) hash: {image_hash[:8]}")
+                    else:
+                        fail_count += 1
+                        print(f"  ✗ 处理失败 ({fail_count}/{len(urls)}) {url}: {error}")
+        
+        print(f"批量处理完成! 成功 {success_count}/{len(urls)} 张")
         return results
     
     def extract_features_batch(self, sources, batch_size=32):
