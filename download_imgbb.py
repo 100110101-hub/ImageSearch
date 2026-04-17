@@ -260,13 +260,13 @@ def discover_users_from_followers(user_url, max_users=100, max_follower_pages=5)
     return new_users
 
 
-def discover_users_deeply(max_total_users=100):
+def discover_users_deeply(max_new_users=200):
     """
     深度发现用户：遍历已发现用户的followers
     跳过已用于发现新用户的用户，防止反复爬取同一用户的followers
     参数:
-        max_total_users: 最大用户总数
-    返回: 所有发现的用户列表
+        max_new_users: 每次最多新发现多少用户（默认200）
+    返回: 新发现的用户列表
     """
     all_new = []
     
@@ -278,7 +278,7 @@ def discover_users_deeply(max_total_users=100):
     existing_users = get_discovered_users()
     
     for user_url in existing_users:
-        if len(_user_list) >= max_total_users:
+        if len(all_new) >= max_new_users:
             break
         
         # 跳过已用于发现新用户的用户

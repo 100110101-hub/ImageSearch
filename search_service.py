@@ -65,9 +65,19 @@ class ImageSearchService:
                 urls = get_sequential_imgbb_urls(batch_size=batch_size)
                 
                 if not urls:
-                    print("[下载] 没有获取到URL，等待后重试...")
-                    time.sleep(interval)
-                    continue
+                    print("[下载] 所有用户都没有更多未训练URL，尝试从followers中发现新用户...")
+                    new_users = discover_users_deeply(max_new_users=200)
+                    if new_users:
+                        print(f"[下载] 发现 {len(new_users)} 个新用户，重置下载位置")
+                        from download_imgbb import _current_user_index, _current_url_position, save_discovered_users
+                        import download_imgbb
+                        download_imgbb._current_user_index = 0
+                        download_imgbb._current_url_position = 0
+                        continue
+                    else:
+                        print("[下载] 没有发现新用户，等待后重试...")
+                        time.sleep(interval)
+                        continue
                 
                 print(f"[下载] 获取到 {len(urls)} 个URL，开始下载和处理...")
                 
@@ -335,7 +345,7 @@ def main():
     print("\n" + "=" * 60)
     print("正在发现imgbb用户...")
     print("=" * 60)
-    discover_users_deeply(max_total_users=50)
+    discover_users_deeply(max_new_users=50)
     print()
     
     # 启动持续下载线程
