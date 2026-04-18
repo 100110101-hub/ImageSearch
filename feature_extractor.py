@@ -91,10 +91,15 @@ class ResNetFeatureExtractor:
                 # 从URL加载
                 response = requests.get(source.split('#')[0], headers=IMGBB_HEADERS, timeout=30)
                 response.raise_for_status()
+                # 允许截断的图片
+                from PIL import ImageFile
+                ImageFile.LOAD_TRUNCATED_IMAGES = True
                 image = Image.open(BytesIO(response.content)).convert('RGB')
                 return image
             else:
                 # 从本地文件加载
+                from PIL import ImageFile
+                ImageFile.LOAD_TRUNCATED_IMAGES = True
                 image = Image.open(source).convert('RGB')
                 return image
         except Exception as e:
@@ -143,7 +148,7 @@ class ResNetFeatureExtractor:
         参数：
             urls: 图片URL列表（ibb.co页面URL或直接图片URL）
             max_workers: 最大线程数（默认15）
-        返回: [(url, image_hash, feature), ...] 成功列表
+        返回: [(url, image_hash, feature, success, error), ...] 完整结果列表
         """
         import hashlib
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -171,8 +176,10 @@ class ResNetFeatureExtractor:
                 # 计算哈希（在提取特征前）
                 image_hash = hashlib.md5(response.content).hexdigest()
                 
-                # 加载并验证图片
-                image = Image.open(BytesIO(response.content)).convert('RGB')
+                # 使用_load_image加载图片（内部已处理超大图片缩放）
+                image = self._load_image(direct_url)
+                if image is None:
+                    return (url, image_hash, None, False, "图片加载失败")
                 
                 # 提取特征
                 input_tensor = self.transform(image)
@@ -192,6 +199,7 @@ class ResNetFeatureExtractor:
         # 使用线程池并发处理
         success_count = 0
         fail_count = 0
+        all_results = []  # 存储所有结果（成功+失败）
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 提交所有任务
@@ -202,6 +210,8 @@ class ResNetFeatureExtractor:
                 url, image_hash, feature, success, error = future.result()
                 
                 with lock:
+                    # 所有结果都添加到all_results（包括失败的）
+                    all_results.append((url, image_hash, feature, success, error))
                     if success:
                         results.append((url, image_hash, feature))
                         success_count += 1
@@ -211,7 +221,7 @@ class ResNetFeatureExtractor:
                         print(f"  ✗ 处理失败 ({fail_count}/{len(urls)}) {url}: {error}")
         
         print(f"批量处理完成! 成功 {success_count}/{len(urls)} 张")
-        return results
+        return all_results
     
     def extract_features_batch(self, sources, batch_size=32):
         """

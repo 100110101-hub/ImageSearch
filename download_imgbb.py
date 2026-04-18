@@ -185,7 +185,7 @@ def get_user_list_with_status():
     return list(_user_list)
 
 
-def discover_users_from_followers(user_url, max_users=100, max_follower_pages=5):
+def discover_users_from_followers(user_url, max_users=1000, max_follower_pages=30):
     """
     从用户的followers页面发现更多用户（支持分页）
     参数:
@@ -260,7 +260,7 @@ def discover_users_from_followers(user_url, max_users=100, max_follower_pages=5)
     return new_users
 
 
-def discover_users_deeply(max_new_users=200):
+def discover_users_deeply(max_new_users=500):
     """
     深度发现用户：遍历已发现用户的followers
     跳过已用于发现新用户的用户，防止反复爬取同一用户的followers
@@ -638,19 +638,46 @@ def get_untrained_urls(user_url, count=None):
     return untrained
 
 
+# URL到用户的缓存（避免每次遍历所有用户文件）
+_url_to_user_cache = {}
+
+def get_user_for_url(image_url):
+    """查找图片URL属于哪个用户（带缓存）"""
+    global _url_to_user_cache
+    
+    if image_url in _url_to_user_cache:
+        return _url_to_user_cache[image_url]
+    
+    # 遍历用户查找
+    users = get_discovered_users()
+    for u in users:
+        url_file = get_user_url_filename(u)
+        if url_file and os.path.exists(url_file):
+            try:
+                with open(url_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    for item in data.get("urls", []):
+                        stored_url = item.get("url", item) if isinstance(item, dict) else item
+                        if stored_url == image_url:
+                            _url_to_user_cache[image_url] = u
+                            return u
+            except Exception:
+                continue
+    
+    return None
+
 def mark_url_as_trained(user_url, url):
     """标记指定URL为已训练"""
     if user_url is None:
-        # 自动查找URL属于哪个用户
-        users = get_discovered_users()
-        for u in users:
-            url_data = load_user_urls(u)
-            for item in url_data.get("urls", []):
-                if item.get("url") == url:
-                    item["trained"] = True
-                    save_user_urls(u, url_data)
-                    return True
-        return False
+        # 先查缓存
+        cached_user = _url_to_user_cache.get(url)
+        if cached_user:
+            user_url = cached_user
+        else:
+            # 自动查找URL属于哪个用户
+            user_url = get_user_for_url(url)
+            if not user_url:
+                return False
     
     url_data = load_user_urls(user_url)
     for u in url_data.get("urls", []):
@@ -942,7 +969,7 @@ def get_sequential_imgbb_urls(batch_size=10):
     """
     按顺序获取未训练的图片URL，自动跳过没有图片的用户和已训练的URL
     从硬盘按页加载URL，每次返回batch_size个未训练URL
-    返回: [url1, url2, ...] 列表，如果没有更多URL则返回空列表
+    返回: [{"url": url, "user": user_url}, ...] 列表，如果没有更多URL则返回空列表
     """
     global _current_user_index, _current_url_file, _current_url_position
     
@@ -982,7 +1009,7 @@ def get_sequential_imgbb_urls(batch_size=10):
                 continue
             
             url_str = url_item.get("url", url_item) if isinstance(url_item, dict) else url_item
-            batch_urls.append(url_str)
+            batch_urls.append({"url": url_str, "user": user_url})
             collected += 1
             
             # 如果当前用户的URL遍历完了，切换到下一个用户

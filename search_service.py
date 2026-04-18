@@ -81,36 +81,51 @@ class ImageSearchService:
                 
                 print(f"[下载] 获取到 {len(urls)} 个URL，开始下载和处理...")
                 
-                # 下载图片、计算哈希、提取特征（在处理前自动计算哈希）
-                results = self.extractor.download_and_extract_batch(urls)
+                # 提取纯URL列表供下载（保留用户映射用于标记）
+                url_list = [u["url"] if isinstance(u, dict) else u for u in urls]
                 
-                if results:
+                # 下载图片、计算哈希、提取特征（在处理前自动计算哈希）
+                # 返回: (url, image_hash, feature, success, error) - 包含所有结果
+                all_results = self.extractor.download_and_extract_batch(url_list)
+                
+                if all_results:
+                    # 构建URL到用户的映射
+                    url_to_user = {}
+                    for u in urls:
+                        if isinstance(u, dict):
+                            url_to_user[u["url"]] = u.get("user")
+                    
                     # 去重并添加到数据库
                     added = 0
                     skipped = 0
+                    failed = 0
                     
-                    for url, image_hash, feature in results:
-                        if not self.db.is_duplicate(image_hash):
-                            self.db.add_feature(url, image_hash, feature)
-                            added += 1
-                            self.total_downloaded += 1
-                            # 标记URL为已训练
-                            from download_imgbb import mark_url_as_trained
-                            mark_url_as_trained(None, url)  # 自动查找用户
-                            print(f"  ✓ 已添加 (hash: {image_hash[:8]})")
+                    for url, image_hash, feature, success, error in all_results:
+                        # 所有URL都标记为已训练，使用已知的用户映射，避免遍历查找
+                        user_url = url_to_user.get(url)
+                        from download_imgbb import mark_url_as_trained
+                        mark_url_as_trained(user_url, url)
+                        
+                        if success and feature is not None and image_hash is not None:
+                            if not self.db.is_duplicate(image_hash):
+                                self.db.add_feature(url, image_hash, feature)
+                                added += 1
+                                self.total_downloaded += 1
+                                print(f"  ✓ 已添加 (hash: {image_hash[:8]})")
+                            else:
+                                skipped += 1
+                                print(f"  ✗ 重复跳过 (hash: {image_hash[:8]})")
                         else:
-                            skipped += 1
-                            # 即使重复也标记为已训练，避免重复处理
-                            from download_imgbb import mark_url_as_trained
-                            mark_url_as_trained(None, url)
-                            print(f"  ✗ 重复跳过 (hash: {image_hash[:8]})")
+                            failed += 1
+                            reason = error or "未知错误"
+                            print(f"  ✗ 处理失败 ({failed}/{len(url_list)}) {url}: {reason}")
                     
                     # 保存数据库
                     if added > 0:
                         self.db.save()
-                        print(f"[保存] 数据库已更新: 新增 {added}, 跳过 {skipped}, 当前共 {len(self.db.image_urls)} 张图片\n")
+                        print(f"[保存] 数据库已更新: 新增 {added}, 重复 {skipped}, 失败 {failed}, 当前共 {len(self.db.image_urls)} 张图片\n")
                     else:
-                        print(f"[跳过] 本批次全部重复，跳过 {skipped} 张\n")
+                        print(f"[跳过] 本批次全部重复或失败: 重复 {skipped}, 失败 {failed}\n")
                 else:
                     print("[警告] 没有成功处理任何图片\n")
                 
@@ -132,7 +147,7 @@ class ImageSearchService:
         """停止服务"""
         self.running = False
     
-    def search_by_url(self, query_url, top_k=10):
+    def search_by_url(self, query_url, top_k=TOP_K):
         """通过URL搜索相似图片"""
         print(f"[搜索] 查询: {query_url}")
         
@@ -174,7 +189,7 @@ def api_search():
         return jsonify({"error": "请提供图片URL"}), 400
     
     query_url = data['url']
-    top_k = data.get('top_k', 10)
+    top_k = data.get('top_k',TOP_K)
     
     results = engine.search_by_url(query_url, top_k=top_k)
     
@@ -249,7 +264,7 @@ def api_index():
         "endpoints": {
             "POST /api/search": {
                 "description": "搜索相似图片",
-                "body": {"url": "图片URL", "top_k": 10}
+                "body": {"url": "图片URL", "top_k": TOP_K}
             },
             "GET /api/stats": {
                 "description": "获取数据库统计"
